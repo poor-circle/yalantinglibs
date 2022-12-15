@@ -101,14 +101,12 @@ TEST_CASE("testing api") {
     CHECK(p == p2.value());
   }
   SUBCASE("serialize to") {
-    auto need_size = get_needed_size(p);
+    auto info = get_serialize_info(p);
     std::vector<std::byte> my_buffer, my_buffer2;
-    my_buffer.resize(need_size);
-    my_buffer2.resize(need_size + offset);
-    auto ret1 = serialize_to(my_buffer.data(), need_size, p);
-    CHECK(ret1 == need_size);
-    auto ret2 = serialize_to(my_buffer2.data() + offset, need_size, p);
-    CHECK(ret2 == need_size);
+    my_buffer.resize(info.size());
+    my_buffer2.resize(info.size() + offset);
+    serialize_to((char *)my_buffer.data(), info, p);
+    serialize_to((char *)my_buffer2.data() + offset, info, p);
     person p1, p2;
     auto ec1 = deserialize_to(p1, my_buffer.data(), my_buffer.size());
     CHECK(ec1 == struct_pack::errc{});
@@ -162,24 +160,6 @@ TEST_CASE("testing pack object") {
   }
 }
 
-TEST_CASE("test buffer size") {
-  person p{20, "tom"};
-  auto size = get_needed_size(p);
-
-  SUBCASE("test great than need") {
-    auto buffer_size = size + 100;
-    auto buffer = std::make_unique<char[]>(buffer_size);
-    auto ret = serialize_to(buffer.get(), buffer_size, p);
-    CHECK(ret == size);
-  }
-
-  SUBCASE("test less than need") {
-    auto buffer_size = size - 1;
-    auto buffer = std::make_unique<char[]>(buffer_size);
-    auto ret = serialize_to(buffer.get(), buffer_size, p);
-    CHECK(ret == 0);
-  }
-}
 void test_container(auto &v) {
   auto ret = serialize(v);
 
@@ -199,33 +179,6 @@ void test_container(auto &v) {
 }
 
 TEST_CASE("testing exceptions") {
-  std::string buffer;
-  buffer.resize(2);
-  auto ret = serialize_to(buffer.data(), buffer.size(), std::string("hello"));
-  CHECK(ret == 0);
-
-  std::array<std::string, 2> arr{"hello", "struct_pack"};
-  auto size = get_needed_size(arr);
-  buffer.resize(size);
-  ret = serialize_to(buffer.data(), size - 1, arr);
-  CHECK(ret == 0);
-
-  std::pair<int, std::string> pair{2, "hello"};
-  size = get_needed_size(pair);
-  buffer.resize(size);
-  ret = serialize_to(buffer.data(), size - 1, pair);
-  CHECK(ret == 0);
-
-  std::map<int, std::string> map{{1, "hello"}};
-  size = get_needed_size(map);
-  buffer.resize(size);
-  ret = serialize_to(buffer.data(), size - 1, map);
-  CHECK(ret == 0);
-  ret = serialize_to(buffer.data(), size - 6, map);
-  CHECK(ret == 0);
-  ret = serialize_to(buffer.data(), size - 10, map);
-  CHECK(ret == 0);
-
   std::vector<int> data_list = {1, 2, 3};
   std::vector<std::byte> my_byte_buffer;
   serialize_to(my_byte_buffer, data_list);
@@ -721,7 +674,7 @@ TEST_CASE("test type info config") {
   SUBCASE("test_person") {
 #ifdef NDEBUG
     {
-      auto size = get_needed_size(person{.age = 24, .name = "Betty"});
+      auto size = get_serialize_info(person{.age = 24, .name = "Betty"}).size();
       CHECK(size == 14);
       auto buffer = serialize(person{.age = 24, .name = "Betty"});
       CHECK(buffer.size() == size);
@@ -731,7 +684,7 @@ TEST_CASE("test type info config") {
     }
 #else
     {
-      auto size = get_needed_size(person{.age = 24, .name = "Betty"});
+      auto size = get_serialize_info(person{.age = 24, .name = "Betty"}).size();
       CHECK(size == 21);
       auto buffer = serialize(person{.age = 24, .name = "Betty"});
       CHECK(buffer.size() == size);
@@ -741,8 +694,10 @@ TEST_CASE("test type info config") {
     }
 #endif
     {
-      auto size = get_needed_size<serialize_config{type_info_config::disable}>(
-          person{.age = 24, .name = "Betty"});
+      auto size =
+          get_serialize_info<serialize_config{type_info_config::disable}>(
+              person{.age = 24, .name = "Betty"})
+              .size();
       CHECK(size == 14);
       auto buffer = serialize<std::vector<char>,
                               serialize_config{type_info_config::disable}>(
@@ -753,8 +708,10 @@ TEST_CASE("test type info config") {
               serialize_config{type_info_config::disable}, person>() == false);
     }
     {
-      auto size = get_needed_size<serialize_config{type_info_config::enable}>(
-          person{.age = 24, .name = "Betty"});
+      auto size =
+          get_serialize_info<serialize_config{type_info_config::enable}>(
+              person{.age = 24, .name = "Betty"})
+              .size();
       CHECK(size == 21);
       auto buffer = serialize<std::vector<char>,
                               serialize_config{type_info_config::enable}>(
@@ -768,7 +725,8 @@ TEST_CASE("test type info config") {
   SUBCASE("test_person_with_type_info") {
     {
       auto size =
-          get_needed_size(person_with_type_info{.age = 24, .name = "Betty"});
+          get_serialize_info(person_with_type_info{.age = 24, .name = "Betty"})
+              .size();
       CHECK(size == 21);
       auto buffer =
           serialize(person_with_type_info{.age = 24, .name = "Betty"});
@@ -778,8 +736,10 @@ TEST_CASE("test type info config") {
                                             person_with_type_info>() == true);
     }
     {
-      auto size = get_needed_size<serialize_config{type_info_config::disable}>(
-          person_with_type_info{.age = 24, .name = "Betty"});
+      auto size =
+          get_serialize_info<serialize_config{type_info_config::disable}>(
+              person_with_type_info{.age = 24, .name = "Betty"})
+              .size();
       CHECK(size == 14);
       auto buffer = serialize<std::vector<char>,
                               serialize_config{type_info_config::disable}>(
@@ -790,8 +750,10 @@ TEST_CASE("test type info config") {
                         person_with_type_info>() == false);
     }
     {
-      auto size = get_needed_size<serialize_config{type_info_config::enable}>(
-          person_with_type_info{.age = 24, .name = "Betty"});
+      auto size =
+          get_serialize_info<serialize_config{type_info_config::enable}>(
+              person_with_type_info{.age = 24, .name = "Betty"})
+              .size();
       CHECK(size == 21);
       auto buffer = serialize<std::vector<char>,
                               serialize_config{type_info_config::enable}>(
@@ -804,8 +766,9 @@ TEST_CASE("test type info config") {
   }
   SUBCASE("test_person_with_no_type_info") {
     {
-      auto size =
-          get_needed_size(person_with_no_type_info{.age = 24, .name = "Betty"});
+      auto size = get_serialize_info(
+                      person_with_no_type_info{.age = 24, .name = "Betty"})
+                      .size();
       CHECK(size == 14);
       auto buffer =
           serialize(person_with_no_type_info{.age = 24, .name = "Betty"});
@@ -816,8 +779,10 @@ TEST_CASE("test type info config") {
           false);
     }
     {
-      auto size = get_needed_size<serialize_config{type_info_config::disable}>(
-          person_with_no_type_info{.age = 24, .name = "Betty"});
+      auto size =
+          get_serialize_info<serialize_config{type_info_config::disable}>(
+              person_with_no_type_info{.age = 24, .name = "Betty"})
+              .size();
       CHECK(size == 14);
       auto buffer = serialize<std::vector<char>,
                               serialize_config{type_info_config::disable}>(
@@ -828,8 +793,10 @@ TEST_CASE("test type info config") {
                         person_with_no_type_info>() == false);
     }
     {
-      auto size = get_needed_size<serialize_config{type_info_config::enable}>(
-          person_with_no_type_info{.age = 24, .name = "Betty"});
+      auto size =
+          get_serialize_info<serialize_config{type_info_config::enable}>(
+              person_with_no_type_info{.age = 24, .name = "Betty"})
+              .size();
       CHECK(size == 21);
       auto buffer = serialize<std::vector<char>,
                               serialize_config{type_info_config::enable}>(
@@ -934,10 +901,10 @@ TEST_CASE("test compatible") {
   SUBCASE("serialize person") {
     person1 p1{20, "tom", 1, false};
     std::vector<char> buffer;
-    buffer.resize(get_needed_size(p1));
+    auto info = get_serialize_info(p1);
+    buffer.resize(info.size());
 
-    auto ret = serialize_to(buffer.data(), buffer.size(), p1);
-    CHECK(ret != 0);
+    serialize_to(buffer.data(), info, p1);
 
     person p;
     auto res = deserialize_to(p, buffer.data(), buffer.size());
@@ -946,12 +913,11 @@ TEST_CASE("test compatible") {
     CHECK(p.age == p1.age);
 
     // short data
-    for (int i = 0, lim = get_needed_size(p); i < lim; ++i)
+    for (int i = 0, lim = get_serialize_info(p).size(); i < lim; ++i)
       CHECK(deserialize_to(p, buffer.data(), i) ==
             struct_pack::errc::no_buffer_space);
 
-    ret = serialize_to(buffer.data(), buffer.size(), p);
-    CHECK(ret != 0);
+    serialize_to(buffer.data(), get_serialize_info(p), p);
 
     person1 p2;
     CHECK(deserialize_to(p2, buffer.data(), buffer.size()) ==
@@ -967,7 +933,7 @@ TEST_CASE("test compatible") {
 #endif
       std::tuple<compatible<std::array<char, array_sz>>> big =
           std::array<char, array_sz>{'A', 'E', 'I', 'O', 'U'};
-      auto sz = get_needed_size(big);
+      auto sz = get_serialize_info(big).size();
       CHECK(sz == 255);
       auto buffer = serialize(big);
       CHECK(sz == buffer.size());
@@ -990,7 +956,7 @@ TEST_CASE("test compatible") {
 #endif
       std::tuple<compatible<std::array<char, array_sz>>> big =
           std::array<char, array_sz>{'A', 'E', 'I', 'O', 'U'};
-      auto sz = get_needed_size(big);
+      auto sz = get_serialize_info(big).size();
       CHECK(sz == 256);
       auto buffer = serialize(big);
       CHECK(sz == buffer.size());
@@ -1013,7 +979,7 @@ TEST_CASE("test compatible") {
 #endif
       std::tuple<compatible<std::string>> big = {std::string{"Hello"}};
       std::get<0>(big).value().resize(array_sz);
-      auto sz = get_needed_size(big);
+      auto sz = get_serialize_info(big).size();
       CHECK(sz == 65535);
       auto buffer = serialize(big);
       CHECK(sz == buffer.size());
@@ -1034,7 +1000,7 @@ TEST_CASE("test compatible") {
 #endif
       std::tuple<compatible<std::string>> big = {std::string{"Hello"}};
       std::get<0>(big).value().resize(array_sz);
-      auto sz = get_needed_size(big);
+      auto sz = get_serialize_info(big).size();
       CHECK(sz == 65538);
       auto buffer = serialize(big);
       CHECK(sz == buffer.size());
@@ -1133,12 +1099,12 @@ TEST_CASE("test serialize offset") {
 
   person p{20, "tom"};
   std::vector<char> buffer;
-  auto need_size = get_needed_size(p);
-  buffer.resize(need_size + offset);
-  auto ret = serialize_to(buffer.data() + offset, buffer.size(), p);
-  CHECK(ret != 0);
+  auto info = get_serialize_info(p);
+  buffer.resize(info.size() + offset);
+  serialize_to(buffer.data() + offset, info, p);
   person p2;
-  CHECK(deserialize_to(p2, buffer.data() + offset, ret) == struct_pack::errc{});
+  CHECK(deserialize_to(p2, buffer.data() + offset, info.size()) ==
+        struct_pack::errc{});
   CHECK(p2 == p);
 
   std::vector<char> buffer2;
@@ -1146,9 +1112,9 @@ TEST_CASE("test serialize offset") {
   auto original_size = buffer2.size();
   auto data_offset = original_size + offset;
   serialize_to_with_offset(buffer2, offset, p);
-  CHECK(data_offset + need_size == buffer2.size());
+  CHECK(data_offset + info.size() == buffer2.size());
   person p3;
-  CHECK(deserialize_to(p3, buffer2.data() + data_offset, need_size) ==
+  CHECK(deserialize_to(p3, buffer2.data() + data_offset, info.size()) ==
         struct_pack::errc{});
   CHECK(p3 == p);
 }

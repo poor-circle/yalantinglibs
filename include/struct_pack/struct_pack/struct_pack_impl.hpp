@@ -129,6 +129,31 @@ constexpr inline type_info_config enable_type_info =
 template <typename... Args>
 STRUCT_PACK_INLINE consteval decltype(auto) get_type_literal();
 
+struct serialize_runtime_info;
+
+namespace detail {
+template <serialize_config conf, typename... Args>
+STRUCT_PACK_INLINE constexpr serialize_runtime_info get_serialize_runtime_info(
+    const Args &...args);
+}
+
+struct serialize_runtime_info {
+ private:
+  std::size_t len_;
+  unsigned char metainfo_;
+  constexpr serialize_runtime_info(std::size_t len_,
+                                   unsigned char metainfo_ = 0)
+      : len_(len_), metainfo_(metainfo_){};
+
+ public:
+  std::size_t size() const { return len_; }
+  unsigned char metainfo() const { return metainfo_; }
+
+  template <serialize_config conf, typename... Args>
+  friend STRUCT_PACK_INLINE constexpr serialize_runtime_info
+  struct_pack::detail::get_serialize_runtime_info(const Args &...args);
+};
+
 namespace detail {
 
 [[noreturn]] inline void unreachable() {
@@ -1010,11 +1035,6 @@ struct serialize_static_config {
 #endif
 };
 
-struct serialize_runtime_info {
-  std::size_t len;
-  unsigned char metainfo;
-};
-
 template <typename... Args>
 using get_args_type =
     typename std::conditional<sizeof...(Args) == 1,
@@ -1041,63 +1061,62 @@ get_serialize_runtime_info(const Args &...args) {
   using Type = get_args_type<Args...>;
   constexpr bool has_compatible = serialize_static_config<Type>::has_compatible;
   constexpr bool has_type_literal = check_if_add_type_literal<conf, Type>();
-  serialize_runtime_info ret{.len = sizeof(uint32_t)};
+  serialize_runtime_info ret{sizeof(uint32_t)};
   auto sz_info = calculate_payload_size(args...);
 
   if (sz_info.max_size < (1ull << 8)) [[likely]] {
-    ret.len += sz_info.total + sz_info.size_cnt;
-    ret.metainfo = 0b00000;
+    ret.len_ += sz_info.total + sz_info.size_cnt;
+    ret.metainfo_ = 0b00000;
     constexpr bool has_compile_time_determined_meta_info =
         has_compatible || has_type_literal;
     if constexpr (has_compile_time_determined_meta_info) {
-      ret.len += sizeof(unsigned char);
+      ret.len_ += sizeof(unsigned char);
     }
   }
   else {
     if (sz_info.max_size < (1ull << 16)) {
-      ret.len += sz_info.total + sz_info.size_cnt * 2;
-      ret.metainfo = 0b01000;
+      ret.len_ += sz_info.total + sz_info.size_cnt * 2;
+      ret.metainfo_ = 0b01000;
     }
     else if (sz_info.max_size < (1ull << 32)) {
-      ret.len += sz_info.total + sz_info.size_cnt * 4;
-      ret.metainfo = 0b10000;
+      ret.len_ += sz_info.total + sz_info.size_cnt * 4;
+      ret.metainfo_ = 0b10000;
     }
     else {
-      ret.len += sz_info.total + sz_info.size_cnt * 8;
-      ret.metainfo = 0b11000;
+      ret.len_ += sz_info.total + sz_info.size_cnt * 8;
+      ret.metainfo_ = 0b11000;
     }
     // size_type >= 1 , has metainfo
-    ret.len += sizeof(unsigned char);
+    ret.len_ += sizeof(unsigned char);
   }
   if constexpr (has_type_literal) {
     constexpr auto type_literal = struct_pack::get_type_literal<Args...>();
     // struct_pack::get_type_literal<Args...>().size() crash in clang13. Bug?
-    ret.len += type_literal.size() + 1;
-    ret.metainfo |= 0b100;
+    ret.len_ += type_literal.size() + 1;
+    ret.metainfo_ |= 0b100;
   }
-  if constexpr (has_compatible) {  // calculate bytes count of serialize
-                                   // length
-    if (ret.len + 2 < (1ull << 16)) [[likely]] {
-      ret.len += 2;
-      ret.metainfo |= 0b01;
+  if constexpr (has_compatible) {  // calculate bytes count of serialize length
+    if (ret.len_ + 2 < (1ull << 16)) [[likely]] {
+      ret.len_ += 2;
+      ret.metainfo_ |= 0b01;
     }
-    else if (ret.len + 4 < (1ull << 32)) {
-      ret.len += 4;
-      ret.metainfo |= 0b10;
+    else if (ret.len_ + 4 < (1ull << 32)) {
+      ret.len_ += 4;
+      ret.metainfo_ |= 0b10;
     }
     else {
-      ret.len += 8;
-      ret.metainfo |= 0b11;
+      ret.len_ += 8;
+      ret.metainfo_ |= 0b11;
     }
   }
   return ret;
 }
 
-template <struct_pack_byte Byte, typename serialize_type>
+template <writer_t writer, typename serialize_type>
 class packer {
  public:
-  packer(Byte *data, const serialize_runtime_info &info)
-      : data_(data), pos_(0), info(info) {}
+  packer(writer &writer_, const serialize_runtime_info &info)
+      : writer_(writer_), info(info) {}
   packer(const packer &) = delete;
   packer &operator=(const packer &) = delete;
 
@@ -1107,10 +1126,6 @@ class packer {
     serialize_metainfo<conf, size_type == 1, T, Args...>();
     serialize_many<size_type>(t, args...);
   }
-
-  STRUCT_PACK_INLINE const Byte *data() { return data_; }
-
-  STRUCT_PACK_INLINE size_t size() { return pos_; }
 
  private:
   template <typename T, typename... Args>
@@ -1142,22 +1157,20 @@ class packer {
   constexpr void STRUCT_PACK_INLINE serialize_metainfo() {
     constexpr auto hash_head = calculate_hash_head<conf, T, Args...>() |
                                (is_default_size_type ? 0 : 1);
-    std::memcpy(data_ + pos_, &hash_head, sizeof(uint32_t));
-    pos_ += sizeof(uint32_t);
+    writer_.write((char *)&hash_head, sizeof(uint32_t));
     if constexpr (hash_head % 2) {  // has more metainfo
-      std::memcpy(data_ + pos_, &info.metainfo, sizeof(char));
-      pos_ += sizeof(char);
+      auto metainfo = info.metainfo();
+      writer_.write((char *)&metainfo, sizeof(char));
       if constexpr (serialize_static_config<serialize_type>::has_compatible) {
         constexpr std::size_t sz[] = {0, 2, 4, 8};
-        auto len_size = sz[info.metainfo & 0b11];
-        std::memcpy(data_ + pos_, &info.len, len_size);
-        pos_ += len_size;
+        auto len_size = sz[metainfo & 0b11];
+        auto len = info.size();
+        writer_.write((char *)&len, len_size);
       }
       if constexpr (check_if_add_type_literal<conf, serialize_type>()) {
         constexpr auto type_literal =
             struct_pack::get_type_literal<T, Args...>();
-        std::memcpy(data_ + pos_, type_literal.data(), type_literal.size() + 1);
-        pos_ += type_literal.size() + 1;
+        writer_.write(type_literal.data(), type_literal.size() + 1);
       }
     }
   }
@@ -1179,16 +1192,14 @@ class packer {
     if constexpr (std::is_same_v<type, std::monostate>) {
     }
     else if constexpr (std::is_fundamental_v<type> || std::is_enum_v<type>) {
-      std::memcpy(data_ + pos_, &item, sizeof(type));
-      pos_ += sizeof(type);
+      writer_.write((char *)&item, sizeof(type));
     }
     else if constexpr (detail::varint_t<type>) {
-      detail::serialize_varint(data_, pos_, item);
+      detail::serialize_varint(writer_, item);
     }
     else if constexpr (c_array<type> || array<type>) {
       if constexpr (is_trivial_serializable<type>::value) {
-        std::memcpy(data_ + pos_, &item, sizeof(type));
-        pos_ += sizeof(type);
+        writer_.write((char *)&item, sizeof(type));
       }
       else {
         for (const auto &i : item) {
@@ -1199,26 +1210,21 @@ class packer {
     else if constexpr (map_container<type> || container<type>) {
       uint64_t size = item.size();
 #ifdef STRUCT_PACK_OPTIMIZE
-      std::memcpy(data_ + pos_, &size, size_type);
-      pos_ += size_type;
+      writer_.write((char *)&size, size_type);
 #else
       if constexpr (size_type == 1) {
-        std::memcpy(data_ + pos_, &size, size_type);
-        pos_ += size_type;
+        writer_.write((char *)&size, size_type);
       }
       else {
-        switch ((info.metainfo & 0b11000) >> 3) {
+        switch ((info.metainfo() & 0b11000) >> 3) {
           case 1:
-            std::memcpy(data_ + pos_, &size, 2);
-            pos_ += 2;
+            writer_.write((char *)&size, 2);
             break;
           case 2:
-            std::memcpy(data_ + pos_, &size, 4);
-            pos_ += 4;
+            writer_.write((char *)&size, 4);
             break;
           case 3:
-            std::memcpy(data_ + pos_, &size, 8);
-            pos_ += 8;
+            writer_.write((char *)&size, 8);
             break;
           default:
             unreachable();
@@ -1230,9 +1236,9 @@ class packer {
         auto container_size = 1ull * size * sizeof(value_type);
         if (container_size >= PTRDIFF_MAX) [[unlikely]]
           unreachable();
-        else
-          std::memcpy(data_ + pos_, item.data(), container_size);
-        pos_ += container_size;
+        else {
+          writer_.write((char *)item.data(), container_size);
+        }
         return;
       }
       else {
@@ -1254,8 +1260,7 @@ class packer {
     }
     else if constexpr (optional<type>) {
       bool has_value = item.has_value();
-      std::memcpy(data_ + pos_, &has_value, sizeof(char));
-      pos_ += sizeof(char);
+      writer_.write((char *)&has_value, sizeof(bool));
       if (has_value) {
         serialize_one<size_type>(*item);
       }
@@ -1264,8 +1269,7 @@ class packer {
       static_assert(std::variant_size_v<type> < 256,
                     "variant's size is too large");
       uint8_t index = item.index();
-      std::memcpy(data_ + pos_, &index, sizeof(index));
-      pos_ += sizeof(index);
+      writer_.write((char *)&index, sizeof(index));
       std::visit(
           [this](auto &&e) {
             this->serialize_one<size_type>(e);
@@ -1274,8 +1278,7 @@ class packer {
     }
     else if constexpr (expected<type>) {
       bool has_value = item.has_value();
-      std::memcpy(data_ + pos_, &has_value, sizeof(has_value));
-      pos_ += sizeof(has_value);
+      writer_.write((char *)&has_value, sizeof(has_value));
       if (has_value) {
         if constexpr (!std::is_same_v<typename type::value_type, void>)
           serialize_one<size_type>(item.value());
@@ -1288,8 +1291,7 @@ class packer {
       if constexpr (!pair<type> && !is_trivial_tuple<type>)
         static_assert(std::is_aggregate_v<std::remove_cvref_t<type>>);
       if constexpr (is_trivial_serializable<type>::value) {
-        std::memcpy(data_ + pos_, &item, sizeof(type));
-        pos_ += sizeof(type);
+        writer_.write((char *)&item, sizeof(type));
       }
       else {
         visit_members(item, [&](auto &&...items) CONSTEXPR_INLINE_LAMBDA {
@@ -1306,8 +1308,7 @@ class packer {
   template <std::size_t size_type, unique_ptr T>
   constexpr void inline serialize_one(const T &item) {
     bool has_value = (item != nullptr);
-    std::memcpy(data_ + pos_, &has_value, sizeof(char));
-    pos_ += sizeof(char);
+    writer_.write((char *)&has_value, sizeof(char));
     if (has_value) {
       serialize_one<size_type>(*item);
     }
@@ -1315,10 +1316,43 @@ class packer {
 
   template <typename T>
   friend constexpr size_t get_needed_size(const T &t);
-  Byte *data_;
-  std::size_t pos_;
+  writer &writer_;
   const serialize_runtime_info &info;
 };
+
+template <serialize_config conf = serialize_config{},
+          struct_pack::writer_t Writer, typename... Args>
+STRUCT_PACK_INLINE void serialize_to(Writer &writer,
+                                     const serialize_runtime_info &info,
+                                     const Args &...args) {
+  static_assert(sizeof...(args) > 0);
+  detail::packer<Writer, detail::get_args_type<Args...>> o(writer, info);
+  switch ((info.metainfo() & 0b11000) >> 3) {
+    case 0:
+      o.template serialize<conf, 1>(args...);
+      break;
+#ifdef STRUCT_PACK_OPTIMIZE
+    case 1:
+      o.template serialize<conf, 2>(args...);
+      break;
+    case 2:
+      o.template serialize<conf, 4>(args...);
+      break;
+    case 3:
+      o.template serialize<conf, 8>(args...);
+      break;
+#else
+    case 1:
+    case 2:
+    case 3:
+      o.template serialize<conf, 2>(args...);
+      break;
+#endif
+    default:
+      detail::unreachable();
+      break;
+  };
+}
 
 template <struct_pack_byte Byte>
 class unpacker {

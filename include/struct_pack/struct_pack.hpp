@@ -19,6 +19,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "struct_pack/struct_pack/reflection.h"
 #include "struct_pack/struct_pack_impl.hpp"
 
 #if __has_include(<expected>) && __cplusplus > 202002L
@@ -168,86 +169,38 @@ STRUCT_PACK_INLINE consteval decltype(auto) get_type_literal() {
 }
 
 template <serialize_config conf = serialize_config{}, typename... Args>
-[[nodiscard]] STRUCT_PACK_INLINE constexpr size_t get_needed_size(
-    const Args &...args) {
-  return detail::get_serialize_runtime_info<conf>(args...).len;
+[[nodiscard]] STRUCT_PACK_INLINE constexpr serialize_runtime_info
+get_serialize_info(const Args &...args) {
+  return detail::get_serialize_runtime_info<conf>(args...);
 }
 
 template <serialize_config conf = serialize_config{},
-          detail::struct_pack_byte Byte, typename... Args>
-std::size_t STRUCT_PACK_INLINE serialize_to(Byte *buffer, std::size_t len,
-                                            const Args &...args) noexcept {
+          struct_pack::writer_t Writer, typename... Args>
+STRUCT_PACK_INLINE void serialize_to(Writer &writer, const Args &...args) {
   static_assert(sizeof...(args) > 0);
-  auto config = detail::get_serialize_runtime_info<conf>(args...);
-  if (config.len > len) [[unlikely]] {
-    return 0;
-  }
-  detail::packer<Byte, detail::get_args_type<Args...>> o(buffer, config);
-  switch ((config.metainfo & 0b11000) >> 3) {
-    case 0:
-      o.template serialize<conf, 1>(args...);
-      break;
-#ifdef STRUCT_PACK_OPTIMIZE
-    case 1:
-      o.template serialize<conf, 2>(args...);
-      break;
-    case 2:
-      o.template serialize<conf, 4>(args...);
-      break;
-    case 3:
-      o.template serialize<conf, 8>(args...);
-      break;
-#else
-    case 1:
-    case 2:
-    case 3:
-      o.template serialize<conf, 2>(args...);
-      break;
-#endif
-    default:
-      detail::unreachable();
-      break;
-  };
-  return config.len;
+  auto info = detail::get_serialize_runtime_info<conf>(args...);
+  struct_pack::detail::serialize_to<conf>(writer, info, args...);
+}
+
+template <serialize_config conf = serialize_config{}, typename... Args>
+void STRUCT_PACK_INLINE serialize_to(char *buffer, serialize_runtime_info info,
+                                     const Args &...args) noexcept {
+  static_assert(sizeof...(args) > 0);
+  auto writer = struct_pack::detail::memory_writer{(char *)buffer};
+  struct_pack::detail::serialize_to<conf>(writer, info, args...);
 }
 
 template <serialize_config conf = serialize_config{},
           detail::struct_pack_buffer Buffer, typename... Args>
-STRUCT_PACK_INLINE void serialize_to(Buffer &buffer, const Args &...args) {
+void STRUCT_PACK_INLINE serialize_to(Buffer &buffer, const Args &...args) {
   static_assert(sizeof...(args) > 0);
   auto data_offset = buffer.size();
-  auto config = detail::get_serialize_runtime_info<conf>(args...);
-  auto total = data_offset + config.len;
+  auto info = detail::get_serialize_runtime_info<conf>(args...);
+  auto total = data_offset + info.size();
   buffer.resize(total);
-
-  detail::packer<std::remove_reference_t<decltype(*buffer.data())>,
-                 detail::get_args_type<Args...>>
-      o(buffer.data() + data_offset, config);
-  switch ((config.metainfo & 0b11000) >> 3) {
-    case 0:
-      o.template serialize<conf, 1>(args...);
-      break;
-#ifdef STRUCT_PACK_OPTIMIZE
-    case 1:
-      o.template serialize<conf, 2>(args...);
-      break;
-    case 2:
-      o.template serialize<conf, 4>(args...);
-      break;
-    case 3:
-      o.template serialize<conf, 8>(args...);
-      break;
-#else
-    case 1:
-    case 2:
-    case 3:
-      o.template serialize<conf, 2>(args...);
-      break;
-#endif
-    default:
-      detail::unreachable();
-      break;
-  };
+  auto writer =
+      struct_pack::detail::memory_writer{(char *)buffer.data() + data_offset};
+  struct_pack::detail::serialize_to<conf>(writer, info, args...);
 }
 
 template <serialize_config conf = serialize_config{},
@@ -256,8 +209,12 @@ void STRUCT_PACK_INLINE serialize_to_with_offset(Buffer &buffer,
                                                  std::size_t offset,
                                                  const Args &...args) {
   static_assert(sizeof...(args) > 0);
-  buffer.resize(buffer.size() + offset);
-  serialize_to<conf>(buffer, args...);
+  auto info = detail::get_serialize_runtime_info<conf>(args...);
+  auto old_size = buffer.size();
+  buffer.resize(old_size + offset + info.size());
+  auto writer = struct_pack::detail::memory_writer{(char *)buffer.data() +
+                                                   old_size + offset};
+  struct_pack::detail::serialize_to<conf>(writer, info, args...);
 }
 
 template <detail::struct_pack_buffer Buffer = std::vector<char>,
@@ -275,8 +232,7 @@ template <detail::struct_pack_buffer Buffer = std::vector<char>,
 serialize_with_offset(std::size_t offset, const Args &...args) {
   static_assert(sizeof...(args) > 0);
   Buffer buffer;
-  buffer.resize(offset);
-  serialize_to<conf>(buffer, args...);
+  serialize_to_with_offset<conf>(buffer, offset, args...);
   return buffer;
 }
 

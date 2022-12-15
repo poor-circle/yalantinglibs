@@ -202,7 +202,7 @@ void bench(T &t, PB &p, std::string tag) {
 
   std::cout << "------- start benchmark " << tag << " -------\n";
 
-  buffer1.reserve(struct_pack::get_needed_size(t));
+  buffer1.reserve(struct_pack::get_serialize_info(t).size());
   msgpack::pack(buffer2, t);
   buffer2.reserve(buffer2.size() * SAMPLES_COUNT);
   auto pb_sz = p.SerializeAsString().size();

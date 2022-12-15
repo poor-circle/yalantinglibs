@@ -156,8 +156,8 @@ template <typename T>
   }
 }
 
-template <typename charT, typename T>
-STRUCT_PACK_INLINE void serialize_varint(charT* data, size_t& pos, const T& t) {
+template <writer_t writer, typename T>
+STRUCT_PACK_INLINE void serialize_varint(writer& writer_, const T& t) {
   uint64_t v;
   if constexpr (sintable_t<T>) {
     v = encode_zigzag(t.get());
@@ -166,10 +166,11 @@ STRUCT_PACK_INLINE void serialize_varint(charT* data, size_t& pos, const T& t) {
     v = t;
   }
   while (v >= 0x80) {
-    data[pos++] = static_cast<uint8_t>(v | 0x80u);
+    uint8_t temp = v | 0x80u;
+    writer_.write((char*)&temp, sizeof(temp));
     v >>= 7;
   }
-  data[pos++] = static_cast<uint8_t>(v);
+  writer_.write((char*)&v, sizeof(char));
 }
 template <typename charT>
 [[nodiscard]] STRUCT_PACK_INLINE struct_pack::errc deserialize_varint_impl(
