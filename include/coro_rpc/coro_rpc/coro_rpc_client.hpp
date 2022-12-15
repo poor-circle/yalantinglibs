@@ -536,9 +536,9 @@ class coro_rpc_client {
 #ifdef UNIT_TEST_INJECT
     }
 #endif
-    [[maybe_unused]] auto sz =
-        struct_pack::serialize_to(buffer.data(), RPC_HEAD_LEN, header);
-    assert(sz == RPC_HEAD_LEN);
+    constexpr auto info = struct_pack::get_serialize_info(header);
+    static_assert(info.size() == RPC_HEAD_LEN);
+    struct_pack::serialize_to((char *)buffer.data(), info, header);
     return buffer;
   }
 

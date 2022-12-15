@@ -19,8 +19,10 @@
 #include <variant>
 
 #include "ServerTester.hpp"
+#include "coro_rpc/coro_rpc/rpc_protocol.h"
 #include "doctest.h"
 #include "rpc_api.hpp"
+#include "struct_pack/struct_pack.hpp"
 
 #ifndef _MSC_VER
 #include <signal.h>
@@ -240,8 +242,9 @@ TEST_CASE("test server write queue") {
   header.seq_num = g_client_id++;
   easylog::info("client_id {} begin to connect {}", header.seq_num, 8820);
   header.length = buffer.size() - RPC_HEAD_LEN;
-  auto sz = struct_pack::serialize_to(buffer.data(), RPC_HEAD_LEN, header);
-  CHECK(sz == RPC_HEAD_LEN);
+  constexpr auto info = struct_pack::get_serialize_info(header);
+  static_assert(info.size() == RPC_HEAD_LEN);
+  struct_pack::serialize_to((char*)buffer.data(), info, header);
   asio::io_context io_context;
   std::thread thd([&io_context]() {
     asio::io_context::work work(io_context);

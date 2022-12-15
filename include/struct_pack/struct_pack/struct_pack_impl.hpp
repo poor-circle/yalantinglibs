@@ -146,8 +146,8 @@ struct serialize_runtime_info {
       : len_(len_), metainfo_(metainfo_){};
 
  public:
-  std::size_t size() const { return len_; }
-  unsigned char metainfo() const { return metainfo_; }
+  constexpr std::size_t size() const { return len_; }
+  constexpr unsigned char metainfo() const { return metainfo_; }
 
   template <serialize_config conf, typename... Args>
   friend STRUCT_PACK_INLINE constexpr serialize_runtime_info
