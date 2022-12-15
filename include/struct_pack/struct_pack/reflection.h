@@ -46,14 +46,16 @@ template <typename T>
 constexpr std::size_t min_alignment = 0;
 
 template <typename T>
-concept writer_t = requires(T t) { t.write((const char *){}, std::size_t{}); };
+concept writer_t = requires(T t) {
+  t.write((const char *){}, std::size_t{});
+};
 
 namespace detail {
 template <typename Type>
 concept deserialize_view = requires(Type container) {
-                             container.size();
-                             container.data();
-                           };
+  container.size();
+  container.data();
+};
 
 struct memory_writer {
   char *buffer;
@@ -65,18 +67,18 @@ struct memory_writer {
 
 template <typename Type>
 concept container_adapter = requires(Type container) {
-                              typename std::remove_cvref_t<Type>::value_type;
-                              container.size();
-                              container.pop();
-                            };
+  typename std::remove_cvref_t<Type>::value_type;
+  container.size();
+  container.pop();
+};
 
 template <typename Type>
 concept container = requires(Type container) {
-                      typename std::remove_cvref_t<Type>::value_type;
-                      container.size();
-                      container.begin();
-                      container.end();
-                    };
+  typename std::remove_cvref_t<Type>::value_type;
+  container.size();
+  container.begin();
+  container.end();
+};
 
 template <typename Type>
 concept is_char_t =
