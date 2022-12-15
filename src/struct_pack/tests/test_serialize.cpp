@@ -912,13 +912,13 @@ TEST_CASE("test compatible") {
     CHECK(p.name == p1.name);
     CHECK(p.age == p1.age);
 
-    auto info = get_serialize_info(p);
+    auto info2 = get_serialize_info(p);
     // short data
-    for (int i = 0, lim = info.size(); i < lim; ++i)
+    for (int i = 0, lim = info2.size(); i < lim; ++i)
       CHECK(deserialize_to(p, buffer.data(), i) ==
             struct_pack::errc::no_buffer_space);
 
-    serialize_to(buffer.data(), info, p);
+    serialize_to(buffer.data(), info2, p);
 
     person1 p2;
     CHECK(deserialize_to(p2, buffer.data(), buffer.size()) ==
