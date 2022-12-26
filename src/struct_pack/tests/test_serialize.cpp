@@ -25,6 +25,8 @@
 #include <utility>
 #include <variant>
 
+#include "struct_pack/struct_pack/error_code.h"
+
 #define private public
 #include "struct_pack/struct_pack.hpp"
 #undef private
@@ -108,9 +110,9 @@ TEST_CASE("testing api") {
     serialize_to((char *)my_buffer.data(), info, p);
     serialize_to((char *)my_buffer2.data() + offset, info, p);
     person p1, p2;
-    auto ec1 = deserialize_to(p1, my_buffer.data(), my_buffer.size());
+    auto ec1 = deserialize_to(p1, my_buffer);
     CHECK(ec1 == struct_pack::errc{});
-    auto ec2 = deserialize_to(p2, my_buffer2.data() + offset,
+    auto ec2 = deserialize_to(p2, (const char *)my_buffer2.data() + offset,
                               my_buffer2.size() - offset);
     CHECK(ec2 == struct_pack::errc{});
     CHECK(p == p1);
@@ -121,16 +123,16 @@ TEST_CASE("testing api") {
     serialize_to(my_buffer, p);
     serialize_to_with_offset(my_buffer2, offset, p);
     CHECK(my_buffer.size() == my_buffer2.size() - offset);
-    auto ret1 = get_field<person, 0>(my_buffer.data(), my_buffer.size());
+    auto ret1 = get_field<person, 0>(my_buffer);
     CHECK(ret1);
-    auto ret2 = get_field<person, 0>(my_buffer2.data() + offset,
+    auto ret2 = get_field<person, 0>((const char *)my_buffer2.data() + offset,
                                      my_buffer2.size() - offset);
     CHECK(ret2);
     CHECK(ret1.value() == p.age);
     CHECK(ret2.value() == p.age);
-    auto ret3 = get_field<person, 1>(my_buffer.data(), my_buffer.size());
+    auto ret3 = get_field<person, 1>(my_buffer);
     CHECK(ret3);
-    auto ret4 = get_field<person, 1>(my_buffer2.data() + offset,
+    auto ret4 = get_field<person, 1>((const char *)my_buffer2.data() + offset,
                                      my_buffer2.size() - offset);
     CHECK(ret4);
     CHECK(ret3.value() == p.name);
@@ -183,17 +185,17 @@ TEST_CASE("testing exceptions") {
   std::vector<std::byte> my_byte_buffer;
   serialize_to(my_byte_buffer, data_list);
   std::vector<int> data_list2;
-  auto ec = deserialize_to(data_list2, my_byte_buffer.data(), 0);
+  auto ec = deserialize_to(data_list2, (const char *)my_byte_buffer.data(), 0);
   CHECK(ec == struct_pack::errc::no_buffer_space);
-  ec = deserialize_to(data_list2, my_byte_buffer.data(),
+  ec = deserialize_to(data_list2, (const char *)my_byte_buffer.data(),
                       my_byte_buffer.size() - 1);
   CHECK(ec == struct_pack::errc::no_buffer_space);
 
   std::vector<std::byte> my_byte_buffer2;
   std::optional<bool> bool_opt;
   serialize_to(my_byte_buffer2, bool_opt);
-  auto ret3 = deserialize<std::optional<bool>>(my_byte_buffer2.data(),
-                                               my_byte_buffer2.size() - 1);
+  auto ret3 = deserialize<std::optional<bool>>(
+      (const char *)my_byte_buffer2.data(), my_byte_buffer2.size() - 1);
   CHECK(!ret3);
   if (!ret3) {
     CHECK(ret3.error() == struct_pack::errc::no_buffer_space);
@@ -510,17 +512,17 @@ TEST_CASE("testing deserialization with invalid data") {
 
   std::string str{};
   auto ret2 = deserialize_to(str, ret.data(), ret.size());
-  CHECK(ret2 == struct_pack::errc::invalid_argument);
+  CHECK(ret2 == struct_pack::errc::invalid_buffer);
 
   ret2 = deserialize_to(str, ret.data(), INT32_MAX);
-  CHECK(ret2 == struct_pack::errc::invalid_argument);
+  CHECK(ret2 == struct_pack::errc::invalid_buffer);
 
   SUBCASE("test invalid int") {
     ret = serialize(std::string("hello"));
 
     std::tuple<int, int> tp{};
     auto ret3 = deserialize_to(tp, ret.data(), ret.size());
-    CHECK(ret3 == struct_pack::errc::invalid_argument);
+    CHECK(ret3 == struct_pack::errc::invalid_buffer);
   }
 }
 
@@ -839,7 +841,7 @@ TEST_CASE("test get field exceptions") {
   auto pair = get_field<std::pair<int, int>, 0>(ret.data(), ret.size());
   CHECK(!pair);
   if (!pair) {
-    CHECK(pair.error() == struct_pack::errc::invalid_argument);
+    CHECK(pair.error() == struct_pack::errc::invalid_buffer);
   }
 
   auto pair1 = get_field<person, 0>(ret.data(), 3);
@@ -852,7 +854,8 @@ TEST_CASE("test get field exceptions") {
 TEST_CASE("test set_value") {
   person p{20, "tom"};
   auto ret = serialize(p);
-  detail::unpacker in(ret.data(), ret.size());
+  detail::memory_reader reader(ret.data(), ret.data() + ret.size());
+  detail::unpacker in(reader);
   person p2;
   struct_pack::errc ec;
   std::string s;
@@ -898,7 +901,7 @@ TEST_CASE("test free functions") {
 }
 
 TEST_CASE("test compatible") {
-  SUBCASE("serialize person") {
+  SUBCASE("serialize person1 2 person") {
     person1 p1{20, "tom", 1, false};
     std::vector<char> buffer;
     auto info = get_serialize_info(p1);
@@ -924,6 +927,19 @@ TEST_CASE("test compatible") {
     CHECK(deserialize_to(p2, buffer.data(), buffer.size()) ==
           struct_pack::errc{});
     CHECK((p2.age == p.age && p2.name == p.name));
+  }
+  SUBCASE("serialize person 2 person1") {
+    std::vector<char> buffer;
+    person p{20, "tom"};
+    struct_pack::serialize_to(buffer, p);
+    struct_pack::serialize_to(buffer, p);
+    struct_pack::serialize_to(buffer, p);
+
+    person1 p1, p0 = {.age = 20, .name = "tom"};
+    auto ec = struct_pack::deserialize_to(p1, buffer);
+    CHECK(ec == struct_pack::errc{});
+    bool i=p1.id.has_value();
+    CHECK(p1 == p0);
   }
   SUBCASE("big compatible metainfo") {
     {

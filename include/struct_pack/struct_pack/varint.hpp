@@ -172,62 +172,38 @@ STRUCT_PACK_INLINE void serialize_varint(writer& writer_, const T& t) {
   }
   writer_.write((char*)&v, sizeof(char));
 }
-template <typename charT>
+template <reader_t Reader>
 [[nodiscard]] STRUCT_PACK_INLINE struct_pack::errc deserialize_varint_impl(
-    charT* data, size_t& pos, size_t size, uint64_t& v) {
-  if ((static_cast<uint64_t>(data[pos]) & 0x80U) == 0) {
-    v = static_cast<uint64_t>(data[pos]);
-    pos++;
-    return {};
-  }
+    Reader& reader, uint64_t& v) {
+  uint8_t now;
   constexpr const int8_t max_varint_length = sizeof(uint64_t) * 8 / 7 + 1;
-  uint64_t val = 0;
-  if (size - pos >= max_varint_length) [[likely]] {
-    do {
-      // clang-format off
-        int64_t b = data[pos++];
-                           val  = ((uint64_t(b) & 0x7fU)       ); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) <<  7U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) << 14U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) << 21U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) << 28U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) << 35U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) << 42U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) << 49U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x7fU) << 56U); if (b >= 0) { break; }
-        b = data[pos++]; val |= ((uint64_t(b) & 0x01U) << 63U); if (b >= 0) { break; }
-      // clang-format on
-      return struct_pack::errc::invalid_argument;
-    } while (false);
-  }
-  else {
-    unsigned int shift = 0;
-    while (pos != size && int64_t(data[pos]) < 0) {
-      val |= (uint64_t(data[pos++]) & 0x7fU) << shift;
-      shift += 7;
-    }
-    if (pos == size) {
+  for (int8_t i = 0; i < max_varint_length; ++i) {
+    if (!reader.read((char*)&now, sizeof(char))) [[unlikely]] {
       return struct_pack::errc::no_buffer_space;
     }
-    val |= uint64_t(data[pos++]) << shift;
+    v |= (1ull * (now & 0x7fu)) << (i * 7);
+    if ((now & 0x80U) == 0) {
+      return {};
+    }
   }
-  v = val;
-  return struct_pack::errc{};
+  return struct_pack::errc::invalid_buffer;
 }
-template <typename charT, typename T>
+template <bool NotSkip = true, reader_t Reader, typename T>
 [[nodiscard]] STRUCT_PACK_INLINE struct_pack::errc deserialize_varint(
-    charT* data, size_t& pos, size_t size, T& t) {
-  uint64_t v;
-  auto ec = deserialize_varint_impl(data, pos, size, v);
-  if (ec == struct_pack::errc{}) [[likely]] {
-    if constexpr (sintable_t<T>) {
-      t = decode_zigzag<int64_t>(v);
-    }
-    else if constexpr (std::is_enum_v<T>) {
-      t = static_cast<T>(v);
-    }
-    else {
-      t = v;
+    Reader& reader, T& t) {
+  uint64_t v = 0;
+  auto ec = deserialize_varint_impl(reader, v);
+  if constexpr (NotSkip) {
+    if (ec == struct_pack::errc{}) [[likely]] {
+      if constexpr (sintable_t<T>) {
+        t = decode_zigzag<int64_t>(v);
+      }
+      else if constexpr (std::is_enum_v<T>) {
+        t = static_cast<T>(v);
+      }
+      else {
+        t = v;
+      }
     }
   }
   return ec;

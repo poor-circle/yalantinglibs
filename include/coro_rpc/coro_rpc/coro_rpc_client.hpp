@@ -546,7 +546,7 @@ class coro_rpc_client {
   rpc_result<T> handle_response_buffer(const std::byte *buffer,
                                        std::size_t len) {
     rpc_return_type_t<T> ret;
-    auto ec = struct_pack::deserialize_to(ret, buffer, len);
+    auto ec = struct_pack::deserialize_to(ret, (const char *)buffer, len);
     if (ec == struct_pack::errc::ok) {
       if constexpr (std::is_same_v<T, void>) {
         return {};
@@ -557,7 +557,7 @@ class coro_rpc_client {
     }
     else {
       rpc_error err;
-      auto ec = struct_pack::deserialize_to(err, buffer, len);
+      auto ec = struct_pack::deserialize_to(err, (const char *)buffer, len);
       if (ec != struct_pack::errc::ok) {
         // if deserialize failed again,
         // we can do nothing but give an error code.
