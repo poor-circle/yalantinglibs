@@ -16,7 +16,6 @@
 #ifdef HAVE_PROTOBUF
 #include "protobuf_sample.hpp"
 #endif
-#include "benchmark.struct_pb.h"
 #include "doctest.h"
 #include "helper.hpp"
 #include "struct_pb_sample.hpp"
